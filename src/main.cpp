@@ -65,10 +65,22 @@ void setup() {
 }
 
 int i = 0;
+unsigned long count = 0;
 
 void loop()
 {
-	printf("Mifare uid: %s\n", readMifare_uid().c_str());
+	M5.update();
+	if (M5.BtnA.wasClicked()){
+		if (writeNtag(4, count)){
+			printf("Wrote count: %lu\n", count);
+		}
+		else{
+			printf("Write failed\n");
+		}
+		count++;
+		delay(200);
+	}
+	printf("Mifare uid: %s / Ntag[4] = %lu\n", readMifare_uid().c_str(), readNtag(4));
 	if (i == 0) showLED(LED_RED, LED_BLACK, LED_BLACK, LED_BLACK);
 	else if (i == 1) showLED(LED_BLACK, LED_GREEN, LED_BLACK, LED_BLACK);
 	else if (i == 2) showLED(LED_BLACK, LED_BLACK, LED_BLUE, LED_BLACK);
