@@ -6,6 +6,8 @@
 #define PIN_LED 7 // ATOM Ext's PortB
 
 MFRC522 mfrc522(0x28);
+#define NTAG_DATA_PAGE 5
+
 
 #define NUM_LEDS 15
 CRGB leds[NUM_LEDS];
@@ -71,7 +73,7 @@ void loop()
 {
 	M5.update();
 	if (M5.BtnA.wasClicked()){
-		if (writeNtag(4, count)){
+		if (writeNtag(NTAG_DATA_PAGE, count)){
 			printf("Wrote count: %lu\n", count);
 		}
 		else{
@@ -80,7 +82,7 @@ void loop()
 		count++;
 		delay(200);
 	}
-	printf("Mifare uid: %s / Ntag[4] = %lu\n", readMifare_uid().c_str(), readNtag(4));
+	printf("Mifare uid: %s / Ntag[%d] = %lu\n", readMifare_uid().c_str(), NTAG_DATA_PAGE, readNtag(NTAG_DATA_PAGE));
 	if (i == 0) showLED(LED_RED, LED_BLACK, LED_BLACK, LED_BLACK);
 	else if (i == 1) showLED(LED_BLACK, LED_GREEN, LED_BLACK, LED_BLACK);
 	else if (i == 2) showLED(LED_BLACK, LED_BLACK, LED_BLUE, LED_BLACK);
