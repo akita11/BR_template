@@ -4,10 +4,11 @@
 #include <FastLED.h>
 
 #define PIN_LED 7 // ATOM Ext's PortB
+#define PIN_TXD 5 // ATOM Ext's PortC(p2)
+#define PIN_RXD 6 // ATOM Ext's PortC(p1)
 
 MFRC522 mfrc522(0x28);
 #define NTAG_DATA_PAGE 5
-
 
 #define NUM_LEDS 15
 CRGB leds[NUM_LEDS];
@@ -18,6 +19,28 @@ CRGB leds[NUM_LEDS];
 #define LED_BLACK CRGB(0, 0, 0)
 #define LED_WHITE CRGB(50, 50, 50)
 #define LED_SKIP CRGB(255, 255, 255) // special value to skip LED update
+
+// play MP3 in SoundDrop (PortC), 0=STOP
+void playMP3(int num){
+	uint8_t cs;
+	if (num == 0){
+		// STOP command
+		Serial2.write(0xaa);
+		Serial2.write(0x04);
+		Serial2.write(0x00);
+		Serial2.write(0xae);
+	}
+	else{
+		// PLAY SPECIFY command
+		Serial2.write(0xaa);
+		Serial2.write(0x07);
+		Serial2.write(0x02);
+		Serial2.write(0x00);
+		Serial2.write(num);
+		cs = 0 - (0xaa + 0x07 + 0x02 + 0x00 + num);;
+		Serial2.write(cs);	
+	}
+}
 
 void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
 	if (c0 != LED_SKIP) leds[0] = c0;
@@ -61,6 +84,7 @@ void setup() {
 	Wire.begin(2, 1); // ATOMS3 Lite's Grove
 	FastLED.addLeds<NEOPIXEL, PIN_LED>(leds, NUM_LEDS); // ATOMS3 Ext.'s PortB (black)
 	mfrc522.PCD_Init(); // Init RFID2 Unit
+	Serial2.begin(9600, SERIAL_8N1, PIN_RXD, PIN_TXD);
 
 	// clear all LEDs
 	for (int i = 0; i < NUM_LEDS; i++) leds[i] = LED_BLACK; FastLED.show();
