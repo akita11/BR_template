@@ -4,22 +4,17 @@
 #include <FastLED.h>
 #include <SPI.h>
 #include <driver/i2s.h>
+#include <math.h>
 
-//#define USE_SOUNDDROP
 #define USE_ATOM_TF
-#define USE_MP3
-
-#define PIN_LED 38 // ATOM Ext's PortA
-
-#ifdef USE_SOUNDDROP
-#define PIN_TXD 5 // ATOM Ext's PortC(p2)
-#define PIN_RXD 6 // ATOM Ext's PortC(p1)
-#endif
 
 #ifdef USE_ATOM_TF
 #include <SD.h>
+#endif
+
+#define PIN_LED 38 // ATOM Ext's PortA
+// for Echo S3R (+ Atomic TF)
 #include <Wire.h>
-// for Echo S3R + Atomic TF
 #define PIN_MOSI 6
 #define PIN_SCK  7
 #define PIN_MISO 8
@@ -32,9 +27,7 @@
 #define ES_SDA_PIN 45
 #define ES_SCL_PIN 0
 #define PIN_4150_CTRL 18 // amp enable (requested name: 4150_CTRL)
-#endif
 
-#ifdef USE_MP3
 #include "libhelix-mp3/mp3dec.h"
 
 // Simple MP3 -> I2S player using libhelix mp3dec
@@ -65,31 +58,42 @@ static void configureI2S(int sampleRate){
 	i2s_zero_dma_buffer(I2S_NUM_0);
 }
 
-bool playMp3FromSD(const char* path){
+bool playMp3(const char* path){
 	File f = SD.open(path);
 	if (!f) { printf("playMp3: open failed %s\n", path); return false; }
+
+	uint32_t fsize = f.size();
+	printf("playMp3: opening %s size=%u\n", path, (unsigned)fsize);
 
 	HMP3Decoder dec = MP3InitDecoder();
 	if (!dec) { printf("playMp3: decoder init failed\n"); f.close(); return false; }
 
-	const int bufSize = (MAINBUF_SIZE < 4096) ? 4096 : MAINBUF_SIZE;
+	const int bufSize = 4096;
 	uint8_t *buf = (uint8_t*)malloc(bufSize);
 	if (!buf){ printf("playMp3: alloc fail\n"); MP3FreeDecoder(dec); f.close(); return false; }
 
 	int bytesRead = f.read(buf, bufSize);
+	// show first bytes for quick inspection (ID3 or sync)
+	if (bytesRead > 8) {
+		printf("playMp3: header bytes: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+			   buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+	}
+	printf("playMp3: initial read %d bytes\n", bytesRead);
 	unsigned char *readPtr = buf;
 	int bytesLeft = bytesRead;
-	short pcmOut[1152*2];
+	int16_t *pcmOut = (int16_t*)malloc(1152 * 2 * sizeof(int16_t));
+	if (!pcmOut) { printf("playMp3: pcmOut alloc fail\n"); free(buf); MP3FreeDecoder(dec); f.close(); return false; }
 	MP3FrameInfo info;
 
+	int frameCount = 0;
 	while (bytesRead > 0){
 		int offset = MP3FindSyncWord((unsigned char*)readPtr, bytesLeft);
 		if (offset < 0){
 			// need more data
 			// move remaining to start
 			if (bytesLeft > 0) memmove(buf, readPtr, bytesLeft);
-			int r = f.read(buf + bytesLeft, MAINBUF_SIZE - bytesLeft);
-			//printf("playMp3: need more data, bytesLeft=%d read_more=%d\n", bytesLeft, r);
+			int r = f.read(buf + bytesLeft, bufSize - bytesLeft);
+			printf("playMp3: need more data, bytesLeft=%d read_more=%d\n", bytesLeft, r);
 			if (r <= 0) break;
 			bytesRead = bytesLeft + r;
 			readPtr = buf;
@@ -101,7 +105,13 @@ bool playMp3FromSD(const char* path){
 
 		int err = MP3Decode(dec, &readPtr, &bytesLeft, pcmOut, 0);
 		if (err == ERR_MP3_NONE){
+			frameCount++;
 			MP3GetLastFrameInfo(dec, &info);
+
+			if (frameCount <= 5) {
+				printf("playMp3: frame %d samprate=%d nChans=%d outputSamps=%d\n",
+					   frameCount, info.samprate, info.nChans, info.outputSamps);
+			}
 
 			// If I2S sample rate mismatches MP3, reconfigure I2S
 			if (info.samprate > 0 && info.samprate != currentI2sRate){
@@ -109,35 +119,40 @@ bool playMp3FromSD(const char* path){
 				currentI2sRate = info.samprate;
 			}
 
-			int outSamples = info.outputSamps; // number of 16-bit samples per channel or total depending on decoder
+				int outSamples = info.outputSamps; // number of 16-bit samples per channel or total depending on decoder
 			if (info.nChans == 1){
 				// expand mono -> stereo
 				int samples = outSamples;
 				int16_t *st = (int16_t*)malloc(samples * 2 * sizeof(int16_t));
 				if (st){
 					for (int i = 0; i < samples; ++i){
-						int16_t s = ((int16_t*)pcmOut)[i];
+						int16_t s = pcmOut[i];
 						st[i*2] = s;
 						st[i*2+1] = s;
 					}
 					size_t written = 0;
-					i2s_write(I2S_NUM_0, st, samples * 2 * sizeof(int16_t), &written, portMAX_DELAY);
+							i2s_write(I2S_NUM_0, st, samples * 2 * sizeof(int16_t), &written, portMAX_DELAY);
+							if (frameCount <= 5) printf("playMp3: i2s wrote %u bytes (mono->stereo)\n", (unsigned)written);
 					free(st);
 				}
 			} else {
 				// stereo or multi-channel: write as provided
-				size_t written = 0;
-				i2s_write(I2S_NUM_0, pcmOut, outSamples * sizeof(int16_t), &written, portMAX_DELAY);
+					size_t written = 0;
+						i2s_write(I2S_NUM_0, pcmOut, outSamples * sizeof(int16_t), &written, portMAX_DELAY);
+						if (frameCount <= 5) printf("playMp3: i2s wrote %u bytes (stereo)\n", (unsigned)written);
 			}
 		} else if (err == ERR_MP3_INDATA_UNDERFLOW){
+			printf("playMp3: decode underflow, bytesLeft=%d\n", bytesLeft);
 			// refill buffer
 			if (bytesLeft > 0) memmove(buf, readPtr, bytesLeft);
 			int r = f.read(buf + bytesLeft, bufSize - bytesLeft);
+			printf("playMp3: refill read_more=%d\n", r);
 			if (r <= 0) break;
 			bytesRead = bytesLeft + r;
 			readPtr = buf;
 			bytesLeft = bytesRead;
 		} else {
+			printf("playMp3: decode error %d\n", err);
 			// try to recover by searching next sync in remaining buffer
 			if (bytesLeft > 1){
 				int skip = MP3FindSyncWord((unsigned char*)readPtr + 1, bytesLeft - 1);
@@ -160,11 +175,12 @@ bool playMp3FromSD(const char* path){
 	}
 
 	free(buf);
+	if (pcmOut) free(pcmOut);
 	MP3FreeDecoder(dec);
+	printf("playMp3: finished\n");
 	f.close();
 	return true;
 }
-#endif
 
 MFRC522 mfrc522(0x28);
 #define NTAG_DATA_PAGE 5
@@ -178,30 +194,6 @@ CRGB leds[NUM_LEDS];
 #define LED_BLACK CRGB(0, 0, 0)
 #define LED_WHITE CRGB(50, 50, 50)
 #define LED_SKIP CRGB(255, 255, 255) // special value to skip LED update
-
-#ifdef USE_SOUNDDROP
-// play MP3 in SoundDrop (PortC), 0=STOP
-void playMP3(int num){
-	uint8_t cs;
-	if (num == 0){
-		// STOP command
-		Serial2.write(0xaa);
-		Serial2.write(0x04);
-		Serial2.write(0x00);
-		Serial2.write(0xae);
-	}
-	else{
-		// PLAY SPECIFY command
-		Serial2.write(0xaa);
-		Serial2.write(0x07);
-		Serial2.write(0x02);
-		Serial2.write(0x00);
-		Serial2.write(num);
-		cs = 0 - (0xaa + 0x07 + 0x02 + 0x00 + num);;
-		Serial2.write(cs);	
-	}
-}
-#endif
 
 void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
 	if (c0 != LED_SKIP) leds[0] = c0;
@@ -252,7 +244,7 @@ static uint16_t read_le_u16(File &f){
 	return (uint16_t)b[0] | ((uint16_t)b[1]<<8);
 }
 
-bool playWavFromSD(const char* path){
+bool playWav(const char* path){
 	File f = SD.open(path);
 	if (!f){
 		printf("playWav: open failed %s\n", path);
@@ -352,13 +344,11 @@ bool playWavFromSD(const char* path){
 				dst[i*2+1] = s;
 			}
 				size_t written = 0;
-			i2s_write(I2S_NUM_0, outBuf, samples * 4, &written, portMAX_DELAY);
-				(void)written;
+				i2s_write(I2S_NUM_0, outBuf, samples * 4, &written, portMAX_DELAY);
 			remaining -= r;
 		} else {
-				size_t written = 0;
-			i2s_write(I2S_NUM_0, readBuf, r, &written, portMAX_DELAY);
-				(void)written;
+					size_t written = 0;
+				i2s_write(I2S_NUM_0, readBuf, r, &written, portMAX_DELAY);
 			remaining -= r;
 		}
 	}
@@ -375,11 +365,30 @@ void setEs8311Volume(uint8_t percent){
 	const uint8_t ES_ADDR = 0x18;
 	uint8_t val = (uint8_t)((uint32_t)percent * 255 / 100);
 	m5gfx::i2c::i2c_temporary_switcher_t tmp(1, ES_SDA_PIN, ES_SCL_PIN);
-	// Write main DAC volume register
-	M5.In_I2C.writeRegister(ES_ADDR, 0x32, &val, 1, 100000);
-	// Write left/right DAC attenuation registers if present
-	M5.In_I2C.writeRegister(ES_ADDR, 0x26, &val, 1, 100000);
-	M5.In_I2C.writeRegister(ES_ADDR, 0x27, &val, 1, 100000);
+	// Write main DAC volume register and read back to verify
+	auto do_write_and_read = [&](uint8_t reg){
+		bool ok = M5.In_I2C.writeRegister(ES_ADDR, reg, &val, 1, 100000);
+		if (!ok) {
+			printf("setEs8311Volume: i2c write reg 0x%02X failed\n", reg);
+			return;
+		}
+		printf("setEs8311Volume: i2c write reg 0x%02X ok\n", reg);
+		uint8_t rb = 0;
+		bool rok = M5.In_I2C.readRegister(ES_ADDR, reg, &rb, 1, 100000);
+		if (rok) printf("setEs8311Volume: read reg 0x%02X = 0x%02X\n", reg, rb);
+		else printf("setEs8311Volume: read reg 0x%02X failed\n", reg);
+	};
+
+	// Write DAC volume and LDAC/RDAC (no startup readback logging)
+	{
+		bool ok;
+		ok = M5.In_I2C.writeRegister(ES_ADDR, 0x32, &val, 1, 100000);
+		if (!ok) printf("setEs8311Volume: i2c write reg 0x32 failed\n");
+		ok = M5.In_I2C.writeRegister(ES_ADDR, 0x26, &val, 1, 100000);
+		if (!ok) printf("setEs8311Volume: i2c write reg 0x26 failed\n");
+		ok = M5.In_I2C.writeRegister(ES_ADDR, 0x27, &val, 1, 100000);
+		if (!ok) printf("setEs8311Volume: i2c write reg 0x27 failed\n");
+	}
 	tmp.restore();
 }
 
@@ -387,7 +396,12 @@ void setup() {
 	M5.begin();
 	Wire.begin(2, 1); // ATOMS3 Lite/EchoS3R Grove
 	FastLED.addLeds<NEOPIXEL, PIN_LED>(leds, NUM_LEDS); // ATOMS3 Ext.'s PortB (black)
+	// clear all LEDs
+	for (int i = 0; i < NUM_LEDS; i++) leds[i] = LED_BLACK; FastLED.show();
+
 	mfrc522.PCD_Init(); // Init RFID2 Unit
+
+//	for (int i = 0; i < 3; i++){printf("%d\n", i); delay(500);}
 #ifdef USE_ATOM_TF
 	// Initialize SPI (SCK, MISO, MOSI)
 	SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI);
@@ -431,6 +445,9 @@ void setup() {
 	// initialize ES8311 via I2C (power up / unmute / DAC enable)
 	{
 		const uint8_t ES_ADDR = 0x18;
+		// Adjusted default to the Variant A settings that produced reliable loud output
+		// - set moderate DAC/LDAC/RDAC (0x80) instead of extremes to avoid pops
+		// - keep HP drive enabled (0x13) and leave DAC muted (0x25=0x00) until fade+unmute
 		static constexpr const uint8_t es_enabled_bulk[] = {
 			2, 0x00, 0x80,  // RESET/ CSM POWER ON
 			2, 0x01, 0xB5,  // CLOCK_MANAGER/ MCLK=BCLK
@@ -441,11 +458,11 @@ void setup() {
 			2, 0x08, 0x00,  // I2S mode: slave(0) or master(0x01) depending on board (try 0)
 			2, 0x23, 0x18,  // I2S format (16bit)
 			2, 0x24, 0x00,  // I2S MCLK ratio (128)
-			2, 0x25, 0x20,  // DAC unmute
-			2, 0x26, 0x00,  // LDACVOL
-			2, 0x27, 0x00,  // RDACVOL
+			2, 0x25, 0x00,  // DAC muted at init (unmute later after fade)
+			2, 0x26, 0x80,  // LDACVOL (mid)
+			2, 0x27, 0x80,  // RDACVOL (mid)
 			2, 0x28, 0x08,  // enable digital click free power up/down
-			2, 0x32, 0xFF,  // DAC volume (full)
+			2, 0x32, 0x80,  // DAC volume (mid)
 			2, 0x37, 0x08,  // Bypass DAC equalizer
 			2, 0x38, 0x00,
 			2, 0x39, 0xB8,
@@ -469,14 +486,24 @@ void setup() {
 		// enable amp output (match M5Unified behavior)
 		pinMode(PIN_4150_CTRL, OUTPUT);
 		digitalWrite(PIN_4150_CTRL, HIGH);
-		setEs8311Volume(80); // set default volume to 80%
-	}
-#ifdef USE_SOUNDDROP
-	Serial2.beginSE(9600, SERIAL_8N1, PIN_RXD, PIN_TXD);
-#endif
 
-	// clear all LEDs
-	for (int i = 0; i < NUM_LEDS; i++) leds[i] = LED_BLACK; FastLED.show();
+		// Start muted, set minimal volume, then fade up and unmute
+		setEs8311Volume(80);
+/*
+		{
+			const uint8_t ES_ADDR_LOCAL = 0x18;
+			m5gfx::i2c::i2c_temporary_switcher_t tmp2(1, ES_SDA_PIN, ES_SCL_PIN);
+			uint8_t rb = 0;
+			if (M5.In_I2C.readRegister(ES_ADDR_LOCAL, 0x00, &rb, 1, 100000)) printf("ES8311: reg 0x00 = 0x%02X\n", rb);
+			else printf("ES8311: read reg 0x00 failed\n");
+			if (M5.In_I2C.readRegister(ES_ADDR_LOCAL, 0x01, &rb, 1, 100000)) printf("ES8311: reg 0x01 = 0x%02X\n", rb);
+			else printf("ES8311: read reg 0x01 failed\n");
+			tmp2.restore();
+		}
+*/
+		i2s_zero_dma_buffer(I2S_NUM_0);
+	}
+
 }
 
 int i = 0;
@@ -486,36 +513,22 @@ void loop()
 {
 	M5.update();
 	if (M5.BtnA.wasClicked()){
+		// Scan SD root for first .wav file and play it
 #ifdef USE_ATOM_TF
-/*
-		if (SD.exists("/01.wav")){
-			printf("Found /01.wav, playing...\n");
-			if (!playWavFromSD("/01.wav")) printf("playWav failed\n");
+//		if (SD.exists("/01.wav")){
+		if (SD.exists("/02.mp3")){
+			printf("playing...\n");
+//			if (!playWav("/01.wav")) printf("failed\n");
+			if (!playMp3("/002.mp3")) printf("failed\n");
 		}
 		else{
-			printf("not Found /01.wav\n");
+			printf("not Found\n");
 		}
-*/
-		#ifdef USE_MP3
-		if (SD.exists("/001.mp3")){
-			printf("Found /001.mp3, playing...\n");
-			if (!playMp3FromSD("/001.mp3")) printf("playWav failed\n");
-		}
-		else{
-			printf("not Found /001.mp3\n");
-		}
-	#endif
 #else
-		if (writeNtag(NTAG_DATA_PAGE, count)){
-			printf("Wrote count: %lu\n", count);
-		}
-		else{
-			printf("Write failed\n");
-		}
-		count++;
-		delay(200);
+		printf("SD playback not enabled (USE_ATOM_TF undefined)\n");
 #endif
 	}
+
 /*
 	printf("Mifare uid: %s / Ntag[%d] = %lu\n", readMifare_uid().c_str(), NTAG_DATA_PAGE, readNtag(NTAG_DATA_PAGE));
 	if (i == 0) showLED(LED_RED, LED_BLACK, LED_BLACK, LED_BLACK);
