@@ -16,7 +16,7 @@
 #define UNIT_AUDIOPLAYER_BAUD 9600
 
 // Uncomment to enable debug output
-#define UNIT_AUDIOPLAYER_DEBUG
+//#define UNIT_AUDIOPLAYER_DEBUG
 
 typedef enum {
     AUDIO_PLAYER_MODE_ALL_LOOP = 0,  // 00: Play all tracks in order, loop after finishing

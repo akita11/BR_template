@@ -7,13 +7,17 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
+// Hardware Configuration for Prototyping:
+// - ATOMSeLite + PortABC
+// - RFID2 Unit @ ATOMS3's Grove
+// - LED Tape @ PortABC's PortA
+// Ntag: use page 5 to store ID
+
 #define DEVICE_ID 0x01234567
+#define NUM_LEDS 4
 
 #define PIN_LED 38 // ATOM Ext's PortA
-
-#define NUM_LEDS 4
 CRGB leds[NUM_LEDS];
-
 #define LED_RED CRGB(50, 0, 0)
 #define LED_GREEN CRGB(0, 50, 0)
 #define LED_BLUE CRGB(0, 0, 50)
@@ -31,8 +35,8 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 esp_now_peer_info_t peerInfo;
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-    Serial.print("\r\nLast Packet Send Status:\t");
-    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+//    printf("\r\nLast Packet Send Status:\t");
+//    printf(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success\n" : "Delivery Fail\n");
 }
 
 void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
@@ -45,7 +49,7 @@ void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
 
 void setup() {
 	M5.begin();
-	Wire.begin(2, 1); // ATOMS3Lite/choS3R Grove
+	Wire.begin(2, 1); // ATOMS3Lite Grove
 
 	FastLED.addLeds<NEOPIXEL, PIN_LED>(leds, NUM_LEDS); // ATOMS3 Ext.'s PortB (black)
 	// clear all LEDs
@@ -56,7 +60,7 @@ void setup() {
 	// Init ESP-NOW
 	WiFi.mode(WIFI_STA);
 	if (esp_now_init() != ESP_OK) {
-		Serial.println("Error initializing ESP-NOW");
+		printf("Error initializing ESP-NOW\n");
 		return;
 	}
 	esp_now_register_send_cb(OnDataSent);
@@ -68,7 +72,7 @@ void setup() {
 	
 	// Add peer        
 	if (esp_now_add_peer(&peerInfo) != ESP_OK){
-		Serial.println("Failed to add peer");
+		printf("Failed to add peer\n");
 		return;
 	}
 }
@@ -82,16 +86,18 @@ void loop()
 	if (M5.BtnA.wasClicked()){
 	}
 
-	int Ntag_ID = readNtag(NTAG_DATA_PAGE);
-	printf("Mifare uid: %s / Ntag[%d] = %lu\n", readMifare_uid().c_str(), NTAG_DATA_PAGE, Ntag_ID);
-	if (Ntag_ID != 0) {
+	String Ntag_uuid = readMifare_uid();
+	int Ntag_ID;
+	if (Ntag_uuid.length() > 0){
+		Ntag_ID = readNtag(NTAG_DATA_PAGE);
+		printf("Mifare uid: %s / Ntag_ID = %lu, sending...", Ntag_uuid.c_str(), Ntag_ID);
 		myData.device_id = DEVICE_ID;
 		myData.ntag_id = Ntag_ID;
 		esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
 		if (result == ESP_OK) {
-			Serial.println("Sent with success");
+			printf("OK\n");
 		} else {
-			Serial.println("Error sending the data");
+			printf("Error\n");
 		}
 	}
 	if (i == 0) showLED(LED_RED, LED_BLACK, LED_BLACK, LED_BLACK);
