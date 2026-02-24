@@ -8,15 +8,15 @@
 #include <esp_now.h>
 
 // Hardware Configuration for Prototyping:
-// - ATOMSeLite + PortABC
-// - RFID2 Unit @ ATOMS3's Grove
-// - LED Tape @ PortABC's PortA
+// - StampC3
+// - RFID2 Unit @ IO1/2
+// - LED Tape @ IO3
 // Ntag: use page 5 to store ID
 
 #define DEVICE_ID 0x01234567
 #define NUM_LEDS 4
 
-#define PIN_LED 38 // ATOM Ext's PortA
+#define PIN_LED 3 // ATOM Ext's PortA
 CRGB leds[NUM_LEDS];
 #define LED_RED CRGB(50, 0, 0)
 #define LED_GREEN CRGB(0, 50, 0)
