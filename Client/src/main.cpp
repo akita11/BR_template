@@ -8,15 +8,18 @@
 #include <esp_now.h>
 
 // Hardware Configuration for Prototyping:
-// - StampC3
-// - RFID2 Unit @ IO1/2
-// - LED Tape @ IO3
+// - ESP32-C3-MINI or WROOM
+// - RFID2 Unit @ IO3/2 (SDA/SCL)
+// - LED Tape @ IO4
 // Ntag: use page 5 to store ID
+
+#define PIN_SDA 3
+#define PIN_SCL 2
+#define PIN_LED 4
 
 #define DEVICE_ID 0x01234567
 #define NUM_LEDS 4
 
-#define PIN_LED 3 // ATOM Ext's PortA
 CRGB leds[NUM_LEDS];
 #define LED_RED CRGB(50, 0, 0)
 #define LED_GREEN CRGB(0, 50, 0)
@@ -49,9 +52,9 @@ void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
 
 void setup() {
 	M5.begin();
-	Wire.begin(2, 1); // ATOMS3Lite Grove
+	Wire.begin(PIN_SDA, PIN_SCL); // 
 
-	FastLED.addLeds<NEOPIXEL, PIN_LED>(leds, NUM_LEDS); // ATOMS3 Ext.'s PortB (black)
+	FastLED.addLeds<NEOPIXEL, PIN_LED>(leds, NUM_LEDS);
 	// clear all LEDs
 	for (int i = 0; i < NUM_LEDS; i++) leds[i] = LED_BLACK; FastLED.show();
 
@@ -85,9 +88,9 @@ void loop()
 	M5.update();
 	if (M5.BtnA.wasClicked()){
 	}
-
 	String Ntag_uuid = readMifare_uid();
 	int Ntag_ID;
+	printf("%d\n", Ntag_uuid.length());
 	if (Ntag_uuid.length() > 0){
 		Ntag_ID = readNtag(NTAG_DATA_PAGE);
 		printf("Mifare uid: %s / Ntag_ID = %lu, sending...", Ntag_uuid.c_str(), Ntag_ID);
