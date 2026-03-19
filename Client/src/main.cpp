@@ -9,12 +9,12 @@
 
 // Hardware Configuration for Prototyping:
 // - ESP32-C3-MINI or WROOM
-// - RFID2 Unit @ IO3/2 (SDA/SCL)
+// - RFID2 Unit @ IO2/3 (SDA/SCL)
 // - LED Tape @ IO4
 // Ntag: use page 5 to store ID
 
-#define PIN_SDA 3
-#define PIN_SCL 2
+#define PIN_SDA 2
+#define PIN_SCL 3
 #define PIN_LED 4
 
 #define DEVICE_ID 0x01234567
