@@ -6,16 +6,21 @@
 #include <math.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_sleep.h>
 
-// Hardware Configuration for Prototyping:
+// #define DEEP_LOWPOWER
+
+// Hardware Configuration
 // - ESP32-C3-MINI or WROOM
 // - RFID2 Unit @ IO2/3 (SDA/SCL)
-// - LED Tape @ IO4
+// - LED Tape @ IO6
 // Ntag: use page 5 to store ID
 
 #define PIN_SDA 2
 #define PIN_SCL 3
-#define PIN_LED 4
+#define PIN_LED 6
+#define PIN_USBIN 1 // divided by 2
+#define PIN_VBAT  4 // divided by 2
 
 #define DEVICE_ID 0x01234567
 #define NUM_LEDS 4
@@ -48,6 +53,47 @@ void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
 	if (c2 != LED_SKIP) leds[2] = c2;
 	if (c3 != LED_SKIP) leds[3] = c3;
 	FastLED.show();
+}
+
+bool isCharging(){
+	int usb_in = analogReadMilliVolts(PIN_USBIN);
+	if(usb_in > 1500) return(true);
+	else return(false);
+}
+
+float getBatteryVoltage()
+{
+	int vbat = analogReadMilliVolts(PIN_VBAT);
+	return(vbat * 2 / 1000.0); // [V]
+}
+
+void setLowPowerMode(bool f) {
+	if (f) {
+		showLED(LED_BLACK, LED_BLACK, LED_BLACK, LED_BLACK);
+		nfcPowerDown();
+		esp_now_deinit();       // ESP-NOW を先に停止してから WiFi を落とす
+		WiFi.mode(WIFI_OFF);
+
+#ifdef DEEP_LOWPOWER
+		esp_sleep_enable_timer_wakeup(1000000ULL); // 1秒タイマー
+		while (true) {
+			esp_light_sleep_start();
+			getBatteryVoltage(); // 起床後にバッテリー電圧を読み取る
+		}
+#endif
+	} else {
+		nfcBegin();
+		WiFi.mode(WIFI_STA);
+		if (esp_now_init() != ESP_OK) {
+			printf("Error re-initializing ESP-NOW\n");
+			return;
+		}
+		esp_now_register_send_cb(OnDataSent);
+		if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+			printf("Failed to re-add peer\n");
+			return;
+		}
+	}
 }
 
 void setup() {

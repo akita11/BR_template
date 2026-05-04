@@ -8,6 +8,12 @@ void nfcBegin(){
     mfrc522.PCD_Init();
 }
 
+void nfcPowerDown() {
+    // CommandReg bit4 (PowerDown) をセット。PCD_NoCmdChange でコマンドは変えずにビットのみ操作
+    mfrc522.PCD_WriteRegister(MFRC522::CommandReg,
+                              MFRC522::PCD_NoCmdChange | 0x10);
+}
+
 String readMifare_uid(){
     String id = "";
     if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) {
