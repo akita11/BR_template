@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <M5Unified.h>
 #include "MFRC522_I2C.h"
 #include "NFC.h"
 #include <FastLED.h>
@@ -7,8 +6,6 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_sleep.h>
-
-// #define DEEP_LOWPOWER
 
 // Hardware Configuration
 // - ESP32-C3-MINI or WROOM
@@ -18,12 +15,13 @@
 
 #define PIN_SDA 2
 #define PIN_SCL 3
-#define PIN_LED 6
+#define PIN_LED 7
 #define PIN_USBIN 1 // divided by 2
 #define PIN_VBAT  4 // divided by 2
+#define PIN_SW  6
 
 #define DEVICE_ID 0x01234567
-#define NUM_LEDS 4
+#define NUM_LEDS 2
 
 CRGB leds[NUM_LEDS];
 #define LED_RED CRGB(50, 0, 0)
@@ -47,17 +45,15 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 //    printf(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success\n" : "Delivery Fail\n");
 }
 
-void showLED(CRGB c0, CRGB c1, CRGB c2, CRGB c3) {
+void showLED(CRGB c0, CRGB c1) {
 	if (c0 != LED_SKIP) leds[0] = c0;
 	if (c1 != LED_SKIP) leds[1] = c1;
-	if (c2 != LED_SKIP) leds[2] = c2;
-	if (c3 != LED_SKIP) leds[3] = c3;
 	FastLED.show();
 }
 
 bool isCharging(){
 	int usb_in = analogReadMilliVolts(PIN_USBIN);
-	if(usb_in > 1500) return(true);
+	if(usb_in > 2000) return(true); // USB電圧が4V以上なら充電中とみなす
 	else return(false);
 }
 
@@ -67,37 +63,53 @@ float getBatteryVoltage()
 	return(vbat * 2 / 1000.0); // [V]
 }
 
-void setLowPowerMode(bool f) {
-	if (f) {
-		showLED(LED_BLACK, LED_BLACK, LED_BLACK, LED_BLACK);
+void checkCharging() {
+	// if USB connected for charge -> enter low power mode until USB disconnected (or SW pressed)
+	if (isCharging()) {
+		showLED(LED_BLACK, LED_BLACK);
 		nfcPowerDown();
 		esp_now_deinit();       // ESP-NOW を先に停止してから WiFi を落とす
 		WiFi.mode(WIFI_OFF);
-
-#ifdef DEEP_LOWPOWER
-		esp_sleep_enable_timer_wakeup(1000000ULL); // 1秒タイマー
-		while (true) {
+		// use deep sleep during charging
+		esp_sleep_enable_timer_wakeup(3000000ULL); // 3秒タイマー
+		while (isCharging() && digitalRead(PIN_SW) == HIGH) {
 			esp_light_sleep_start();
-			getBatteryVoltage(); // 起床後にバッテリー電圧を読み取る
+			showLED(CRGB(10, 10, 10), LED_BLACK); // flash LED whte during charging
+			delay(1);
+			showLED(LED_BLACK, LED_BLACK);
 		}
-#endif
-	} else {
+		/*
+		// don't use deep sleep during charging
+		while (isCharging() && digitalRead(PIN_SW) == HIGH) {
+			showLED(CRGB(10, 10, 10), LED_BLACK);
+			delay(1);
+			showLED(LED_BLACK, LED_BLACK);
+			delay(3000);
+		}
+		*/
+
+		// end of charging (or SW pressed), resume normal operation
 		nfcBegin();
 		WiFi.mode(WIFI_STA);
 		if (esp_now_init() != ESP_OK) {
 			printf("Error re-initializing ESP-NOW\n");
+			showLED(LED_RED, LED_RED);
 			return;
 		}
 		esp_now_register_send_cb(OnDataSent);
 		if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+			showLED(LED_RED, LED_BLACK);
 			printf("Failed to re-add peer\n");
 			return;
 		}
+		showLED(LED_GREEN, LED_GREEN);
+		delay(1000);
 	}
 }
 
+
 void setup() {
-	M5.begin();
+	pinMode(PIN_SW, INPUT_PULLUP);
 	Wire.begin(PIN_SDA, PIN_SCL); // 
 
 	FastLED.addLeds<NEOPIXEL, PIN_LED>(leds, NUM_LEDS);
@@ -131,9 +143,10 @@ unsigned long count = 0;
 
 void loop()
 {
-	M5.update();
-	if (M5.BtnA.wasClicked()){
-	}
+	if (digitalRead(PIN_SW) == HIGH) // SW pressed -> skip charging check
+		checkCharging();
+
+	// read NFC tag and send data via ESP-NOW
 	String Ntag_uuid = readMifare_uid();
 	int Ntag_ID;
 	printf("%d\n", Ntag_uuid.length());
@@ -142,6 +155,9 @@ void loop()
 		printf("Mifare uid: %s / Ntag_ID = %lu, sending...", Ntag_uuid.c_str(), Ntag_ID);
 		myData.device_id = DEVICE_ID;
 		myData.ntag_id = Ntag_ID;
+		showLED(LED_BLUE, LED_BLUE);
+		delay(500);
+		showLED(LED_GREEN, LED_GREEN);
 		esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
 		if (result == ESP_OK) {
 			printf("OK\n");
@@ -149,10 +165,5 @@ void loop()
 			printf("Error\n");
 		}
 	}
-	if (i == 0) showLED(LED_RED, LED_BLACK, LED_BLACK, LED_BLACK);
-	else if (i == 1) showLED(LED_BLACK, LED_GREEN, LED_BLACK, LED_BLACK);
-	else if (i == 2) showLED(LED_BLACK, LED_BLACK, LED_BLUE, LED_BLACK);
-	else showLED(LED_BLACK, LED_BLACK, LED_BLACK, LED_WHITE);
-	i = (i + 1) % 4;
 	delay(500);	
 }
